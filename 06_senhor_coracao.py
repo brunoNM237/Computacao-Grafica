@@ -43,7 +43,7 @@ def leque(x, y):
     return np.column_stack((x, y, np.zeros_like(x), np.ones_like(x))).astype('f4')
 
 
-def curva_coracao(n=360):
+def curva_coracao(n=180):
     t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     x = 16.0 * np.sin(t) ** 3
     y = (13.0 * np.cos(t) - 5.0 * np.cos(2 * t)
@@ -52,7 +52,7 @@ def curva_coracao(n=360):
     return leque(x / 17.0, y / 17.0)       # normaliza para caber em [-1, 1]
 
 
-def curva_circulo(n=360):
+def curva_circulo(n=48):
     t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     return leque(np.cos(t), np.sin(t))
 
