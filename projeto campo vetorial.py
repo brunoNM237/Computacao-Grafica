@@ -10,15 +10,16 @@ from fisica import calcular_campo, interpolar_cor
 import glfw 
 import moderngl
 import numpy as np
+import math
 
 VERMELHO_CARGA = (0.9, 0.2, 0.2, 1.0)
 AZUL_CAMPO = (0.2, 0.6, 1.0, 1.0)
 FUNDO = (0.08, 0.08, 0.12, 1.0)
-AZUL_ESCURO = (0.0, 0.0, 0.55, 1.0)
+AZUL_CARGA = (0.0, 0.0, 0.55, 1.0)
 
 
-pos_particula_x = 0.1 
-pos_particula_y = 0.3 
+pos_particula_x = 0.0
+pos_particula_y = 0.0 
 negativo = True
 
 
@@ -35,7 +36,11 @@ def leque(x, y):
 
 def curva_circulo(n=48):
     t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
-    return leque(np.cos(t), np.sin(t))
+    return leque(0.8 * np.cos(t), 0.8 * np.sin(t))
+
+
+
+
 
 def malha_seta():
     segmentos = [
@@ -51,21 +56,22 @@ def malha_seta():
     ]
     return np.array(segmentos, dtype='f4')
 
+#criação do grid
 
+def criar_grid(n_linhas=20, n_colunas=20, limite=1.00):
 
-def criar_grid(n_linhas=11, n_colunas=11, limite=0.85):
-    """
-    Gera uma lista de tuplas (x, y) uniformemente espaçadas.
-    Ex: 11x11 = 121 pontos de amostragem.
-    """
     xs = np.linspace(-limite, limite, n_colunas)
     ys = np.linspace(-limite, limite, n_linhas)
     
-    # Cria os pares (x, y) combinando todas as linhas e colunas
-    pontos = [(float(x), float(y)) for x in xs for y in ys]
+    
+    
+    pontos = []
+    for x in xs:
+        for y in ys:
+            pontos.append((float(x),float(y)))
     return pontos
 
-# Gera o grid uma única vez (não precisa recriar a cada quadro)
+
 grid_pontos = criar_grid(n_linhas=11, n_colunas=11)
 
 
@@ -119,10 +125,10 @@ vbo_circulo, vao_circulo = montar(curva_circulo())
 vbo_seta, vao_seta = montar(malha_seta())
 
 def desenhar(vao, escala, deslocamento, cor, modo=moderngl.TRIANGLE_FAN, angulo=0.0):
-    ajustar('u_escala', escala)             # Define o tamanho na GPU
-    ajustar('u_deslocamento', deslocamento) # Define a posição (x, y) na GPU
-    ajustar('u_cor', cor)                   # Define a cor (RGBA) na GPU
-    ajustar('u_angulo', float(angulo))
+    ajustar('u_escala', escala)             # escaala
+    ajustar('u_deslocamento', deslocamento) # deslocamento
+    ajustar('u_cor', cor)                   # cor 
+    ajustar('u_angulo', float(angulo))      # angulo
     vao.render(modo)
 
 
@@ -153,27 +159,33 @@ while not glfw.window_should_close(janela):
     
 
 
-    # Círculo (ex: partícula/carga) no centro (0.0, 0.0) com escala 0.15
-
-    # Seta (vetor de campo) saindo de (0.2, 0.0) com tamanho 0.3
     
     if negativo:
-        desenhar(vao_circulo, 0.12, (pos_particula_x, pos_particula_y), VERMELHO_CARGA, modo=moderngl.TRIANGLE_FAN)
+        desenhar(vao_circulo, 0.15, (pos_particula_x, pos_particula_y), AZUL_CARGA, modo=moderngl.TRIANGLE_FAN)
     else:
-        desenhar(vao_circulo, 0.12, (pos_particula_x, pos_particula_y), AZUL_ESCURO, modo=moderngl.TRIANGLE_FAN)
+        desenhar(vao_circulo, 0.15, (pos_particula_x, pos_particula_y), VERMELHO_CARGA, modo=moderngl.TRIANGLE_FAN)
 
 
     for sx, sy in grid_pontos:
-        dist2 = (sx - pos_particula_x)**2 + (sy -pos_particula_y)**2
-        if dist2 < 0.012:
-            continue
+        dist = math.sqrt ((sx - pos_particula_x)**2 + (sy -pos_particula_y)**2)
 
-        if negativo:
-            theta, escala , intensidade = calcular_campo(sx, sy, pos_particula_x, pos_particula_y, carga=1.0)
-        else:    
-            theta, escala , intensidade = calcular_campo(sx, sy, pos_particula_x, pos_particula_y, carga=-1.0)
         
+        if dist < 0.15:
+                continue
+                
+        if not negativo: 
+            theta, escala , intensidade = calcular_campo(sx, sy, pos_particula_x, pos_particula_y, carga=1.0)
+        else:
+            theta, escala , intensidade = calcular_campo(sx, sy, pos_particula_x, pos_particula_y, carga=-1.0)
+            
+            if 0.14 + escala > dist:
+                continue
+
+        
+
         cor_seta = interpolar_cor(intensidade)
+        
+        
         
         desenhar(vao_seta, escala, (sx, sy), cor_seta, modo=moderngl.LINES, angulo=theta)
     glfw.swap_buffers(janela)

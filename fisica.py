@@ -10,8 +10,8 @@ def calcular_campo(sx, sy, px, py, carga=1.0):
     intensidade = 0.02 / dist2 
 
 
-    escala = float(np.clip(intensidade, 0.04, 0.18))  
-
+    escala = float(max(0.04, min(intensidade, 0.18)))
+    
     if carga > 0:
         angulo = np.arctan2(dy,dx)
     else: 
@@ -21,25 +21,32 @@ def calcular_campo(sx, sy, px, py, carga=1.0):
 
 
 
-def interpolar_cor(intensidade, t_max=0.25):
-    """
-    Gradiente de campo elétrico em 2 etapas:
-    t in [0.0, 0.5]: Azul escuro (0.1, 0.2, 0.9) -> Ciano brilhante (0.0, 0.9, 1.0)
-    t in [0.5, 1.0]: Ciano brilhante -> Amarelo/Laranja de alta energia (1.0, 0.85, 0.1)
-    """
-    t = float(np.clip(intensidade / t_max, 0.0, 1.0))
 
-    if t < 0.5:
-        # Normaliza o primeiro trecho para [0, 1]
-        k = t / 0.5
+
+def interpolar_cor(intensidade, int_corte=0.12):
+    """
+    int_corte: intensidade exata calculada na borda exterior da partícula.
+    Quando a seta chega na distância mínima permitida, ela atinge 1.0 (vermelho vivo).
+    """
+    t = float(np.clip(intensidade / int_corte, 0.0, 1.0))
+
+    if t < 0.33:
+        # Longe da partícula: Azul escuro -> Ciano
+        k = t / 0.33
         r = 0.1 * (1.0 - k) + 0.0 * k
         g = 0.2 * (1.0 - k) + 0.9 * k
         b = 0.9 * (1.0 - k) + 1.0 * k
-    else:
-        # Normaliza o segundo trecho para [0, 1]
-        k = (t - 0.5) / 0.5
+    elif t < 0.66:
+        # Meia distância: Ciano -> Amarelo/Laranja
+        k = (t - 0.33) / 0.33
         r = 0.0 * (1.0 - k) + 1.0 * k
-        g = 0.9 * (1.0 - k) + 0.85 * k
+        g = 0.9 * (1.0 - k) + 0.7 * k
         b = 1.0 * (1.0 - k) + 0.1 * k
+    else:
+        # No limite da carga: Laranja -> Vermelho puro (1.0, 0.0, 0.0)
+        k = (t - 0.66) / 0.34
+        r = 1.0
+        g = 0.7 * (1.0 - k) + 0.0 * k
+        b = 0.1 * (1.0 - k) + 0.0 * k
 
     return (float(r), float(g), float(b), 1.0)
