@@ -22,6 +22,9 @@ pos_particula_x = 0.0
 pos_particula_y = 0.0 
 negativo = True
 
+n_linhas = 11
+n_colunas = 11
+
 
 
 PASSO = 0.05
@@ -57,7 +60,6 @@ def malha_seta():
     return np.array(segmentos, dtype='f4')
 
 #criação do grid
-
 def criar_grid(n_linhas=20, n_colunas=20, limite=1.00):
 
     xs = np.linspace(-limite, limite, n_colunas)
@@ -71,18 +73,7 @@ def criar_grid(n_linhas=20, n_colunas=20, limite=1.00):
             pontos.append((float(x),float(y)))
     return pontos
 
-
-grid_pontos = criar_grid(n_linhas=11, n_colunas=11)
-
-
-def erro_glfw(codigo, descricao):
-    """Substitui o aviso padrão do pyGLFW: imprime código 
-    e descrição de qualquer erro do GLFW em stderr"""
-    print(f"GLFW [{codigo}]: {descricao}", file=sys.stderr)
-
-glfw.set_error_callback(erro_glfw)
-
-
+grid_pontos = criar_grid(n_linhas, n_colunas)
 if not glfw.init():
     sys.exit("FALHA: glfw nao inicializou")
 
@@ -137,6 +128,9 @@ def tecla(window, key, scancode, action, mods):
     global pos_particula_x
     global pos_particula_y
     global negativo
+    global n_linhas
+    global n_colunas
+    global grid_pontos 
     if action != glfw.PRESS and action != glfw.REPEAT:
         return
     if key == glfw.KEY_ESCAPE:
@@ -148,6 +142,17 @@ def tecla(window, key, scancode, action, mods):
         pos_particula_y = pos_particula_y + dy*PASSO
     elif key == glfw.KEY_D:
         negativo = not negativo
+    elif key == glfw.KEY_U:
+        n_linhas = n_linhas + 1
+        n_colunas = n_colunas + 1 
+        grid_pontos = criar_grid(n_linhas, n_colunas)
+    elif key == glfw.KEY_J:
+        if n_linhas == 0:
+            return 
+
+        n_linhas = n_linhas - 1
+        n_colunas = n_colunas - 1 
+        grid_pontos = criar_grid(n_linhas, n_colunas)
 
 glfw.set_key_callback(janela, tecla)
 
@@ -178,7 +183,7 @@ while not glfw.window_should_close(janela):
         else:
             theta, escala , intensidade = calcular_campo(sx, sy, pos_particula_x, pos_particula_y, carga=-1.0)
             
-            if 0.14 + escala > dist:
+            if 0.15 + escala > dist:
                 continue
 
         
@@ -196,4 +201,4 @@ while not glfw.window_should_close(janela):
 for r in (vao_circulo, vao_seta, vbo_circulo, vbo_seta, prog):
     r.release()
 glfw.terminate()
-print("Execucao finalizada.")
+print("Execuçao terminada")
