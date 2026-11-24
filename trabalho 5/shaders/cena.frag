@@ -23,6 +23,7 @@ uniform float u_alfa;
 uniform bool u_blinn;
 uniform bool u_cartoon;
 uniform int u_niveis;        // numero de niveis do cartoon
+uniform bool u_sem_luz;
 
 out vec4 outfragcolor;
 
@@ -33,6 +34,8 @@ float quantizar(float f) {
 
 vec3 phong(vec3 P, vec3 N, vec3 kd,
            vec4 luz, vec3 ia, vec3 id, vec3 is_) {
+  
+
     vec3 L;
     float atenuacao = 1.0;
 
@@ -67,6 +70,12 @@ vec3 phong(vec3 P, vec3 N, vec3 kd,
 }
 
 void main() {
+    if (u_sem_luz) {
+        outfragcolor = vec4(u_kd, 1.0);
+        return;
+    }    
+
+
     vec3 N = normalize(fN);    // a interpolacao encurta a normal
     vec3 kd = u_usar_textura ? texture(u_base, fTexCoord).rgb : u_kd;
 
