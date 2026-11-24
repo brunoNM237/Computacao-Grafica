@@ -1,12 +1,18 @@
 """
 Cavaleiro vs Zumbis
-Baseado no Visualizador v3.
+
+
+Executar: python main2iluminacao.py
 
 Controles:
+  ENTER / ESPACO : iniciar partida (na tela de inicio)
   A / D ou Setas : mover o cavaleiro
   ESPACO         : golpe de espada
-  R              : reiniciar apos Game Over
-  Q              : alternar Camera Lateral / Camera Orbital (mouse + scroll)
+  P              : pausar / retomar
+  R              : reiniciar partida
+  Q              : alternar Camera Lateral / Camera Orbital
+  Mouse + Scroll : girar (Trackball) e aproximar/afastar na Camera Orbital
+  V              : ligar / desligar VSync
   B / T / L      : Blinn-Phong / Cartoon / Luz pontual
   W / C / Z      : aramado / descarte de faces / zerar Trackball
   ESC            : sair
@@ -44,37 +50,81 @@ LIMITE_X = 4.5
 SPAWN_X = 5.8
 VEL_CAV = 4.5
 VEL_ZUMBI_INI = 1.8
-PASSO_VEL = 0.35           # quanto o zumbi acelera a cada spawn
-MEIO_BONECO = 0.45         # meia-largura do cavaleiro e do zumbi
-MEIO_ESPADA = 0.70         # meia-largura da area do golpe
+PASSO_VEL = 0.35
+MEIO_BONECO = glm.vec3(0.45, 0.90, 0.45)
+MEIO_ESPADA = glm.vec3(0.70, 0.70, 0.60)
 DURACAO_GOLPE = 0.25
+
+PLACAR_CANTO = (-0.90, 0.88)
+PLACAR_PASSO = 0.08
+ESCALA_MARCA = 0.035
+COR_PONTO = glm.vec3(0.95, 0.78, 0.15)
+COR_VIDA = glm.vec3(0.85, 0.12, 0.25)
+COR_FUNDO_HUD = glm.vec3(0.08, 0.09, 0.12)
+COR_PLAY      = glm.vec3(0.15, 0.85, 0.30)
+COR_PAUSA     = glm.vec3(1, 0.95, 0.95)
 
 CAMPOS_CUBO = [('3f', 'vPosition'), ('3f', 'vNormal'), ('2f', 'vTexCoord')]
 CAMPOS_TEXTURA = CAMPOS_CUBO + [('4f', 'vTangente')]
 
 
-def colidiu(x1, meio1, x2, meio2):
-    """Sobreposicao em X: centros distam menos que a soma das meias-larguras."""
-    return abs(x1 - x2) < meio1 + meio2
+QUAD = np.array([
+    [-0.5, -0.5, 0.0, 1.0],
+    [ 0.5, -0.5, 0.0, 1.0],
+    [ 0.5,  0.5, 0.0, 1.0],
+    [-0.5,  0.5, 0.0, 1.0],
+], dtype='f4')
+
+def colidiu_3d(p1, m1, p2, m2):
+    """Colisao AABB 3D:  x, y ,z"""
+    return (abs(p1.x - p2.x) < m1.x + m2.x and
+            abs(p1.y - p2.y) < m1.y + m2.y and
+            abs(p1.z - p2.z) < m1.z + m2.z)
 
 
 estado = {
-    "aramado": False, "blinn": True, "cartoon": False,
-    "luz_pontual": True, "cam_orbital": False,
-    "tempo": 0.0, "descarte": True,
+    "aramado": False, 
+    "blinn": True, 
+    "cartoon": False,
+    "luz_pontual": True, 
+    "cam_orbital": False,
+    "descarte": True, 
+    "vsync": True, 
+    "fps": 0.0,
 }
 
 
-def reiniciar():
+def reiniciar(fase_inicial="INICIO"):
     estado.update({
+        "fase": fase_inicial,      # INICIO | JOGANDO | PAUSADO | GAME_OVER
+        "tempo": 0.0,
         "cav_x": 0.0, "cav_dir": 1.0, "golpe": 0.0,
         "zumbi_x": random.choice([-SPAWN_X, SPAWN_X]),
         "zumbi_vel": VEL_ZUMBI_INI,
-        "pontos": 0, "game_over": False,
+        "pontos": 0,
     })
 
 
-reiniciar()
+reiniciar("INICIO")
+
+
+def leque(x, y):
+    x = np.concatenate(([0.0], x, [x[0]]))
+    y = np.concatenate(([0.0], y, [y[0]]))
+    return np.column_stack((x, y, np.zeros_like(x), np.ones_like(x))).astype('f4')
+
+
+def curva_circulo(n=32):
+    t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    return leque(np.cos(t), np.sin(t))
+
+
+def curva_coracao(n=60):
+    t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    x = 16.0 * np.sin(t) ** 3
+    y = 13.0 * np.cos(t) - 5.0 * np.cos(2 * t) - 2.0 * np.cos(3 * t) - np.cos(4 * t)
+    y = y - 0.5 * (y.max() + y.min())
+    return leque(x / 17.0, y / 17.0)
 
 
 def erro_glfw(codigo, descricao):
@@ -148,6 +198,47 @@ class MalhaGPU:
         for r in (self.vao, self.ebo, self.vbo):
             r.release()
 
+def desenhar_placar(ctx, prog, vao_circ, vao_coracao, vao_play, vao_quad,
+                    camera, pontuacao, vivo=True):
+    ctx.disable(moderngl.DEPTH_TEST)
+    ctx.disable(moderngl.CULL_FACE)
+    ctx.wireframe = False
+
+    I = glm.mat4(1.0)
+    enviar(prog, u_sem_luz=True, u_visao=I,
+           u_projecao=glm.ortho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0))
+
+    def desenhar_2d(vao, x, y, cor, sx=ESCALA_MARCA, sy=None):
+        if sy is None:
+            sy = sx
+        M = glm.scale(glm.translate(I, glm.vec3(x, y, 0.0)),
+                      glm.vec3(sx / camera.aspecto, sy, 1.0))
+        enviar(prog, u_modelo=M, u_kd=cor)
+        vao.render(moderngl.TRIANGLE_FAN)
+
+    for i in range(min(pontuacao, 15)):
+        x = PLACAR_CANTO[0] + i * PLACAR_PASSO
+        y = PLACAR_CANTO[1]
+        desenhar_2d(vao_circ, x, y, COR_PONTO)
+
+    if estado["fase"] == "INICIO":
+        desenhar_2d(vao_circ, 0.0, 0.0, COR_FUNDO_HUD, 0.25)
+        desenhar_2d(vao_play, 0.0, 0.0, COR_PLAY, 0.16)
+    elif estado["fase"] == "PAUSADO":
+        desenhar_2d(vao_circ, 0.0, 0.0, COR_FUNDO_HUD, 0.25)
+        dx = 0.075 / camera.aspecto
+        desenhar_2d(vao_quad, -dx, 0.0, COR_PAUSA, 0.07, 0.24)
+        desenhar_2d(vao_quad,  dx, 0.0, COR_PAUSA, 0.07, 0.24)
+
+    if vivo:
+        desenhar_2d(vao_coracao, 0.90, PLACAR_CANTO[1], COR_VIDA, 0.05)
+
+    ctx.enable(moderngl.DEPTH_TEST)
+
+    if vivo:
+        desenhar_2d(vao_coracao, 0.90, PLACAR_CANTO[1], COR_VIDA)
+
+
 
 def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
                     estado, camera, bola):
@@ -155,6 +246,7 @@ def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
     ctx.disable_direct(GL_FRAMEBUFFER_SRGB)
     ctx.clear(*FUNDO, depth=1.0)
     ctx.enable_direct(GL_FRAMEBUFFER_SRGB)
+    ctx.enable(moderngl.DEPTH_TEST)
 
     if estado["descarte"]:
         ctx.enable(moderngl.CULL_FACE)
@@ -167,12 +259,10 @@ def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
     projecao = glm.perspective(glm.radians(45.0), camera.aspecto, NEAR, FAR)
 
     if estado["cam_orbital"]:
-        # Camera 2: Orbital (Trackball + scroll)
         giro = bola.matriz()
         visao = camera.visao()
         olho = camera.olho
     else:
-        # Camera 1: LookAt lateral seguindo o cavaleiro
         giro = glm.mat4(1.0)
         olho = glm.vec3(pos_cav.x, pos_cav.y + 1.8, DIST_CAM1)
         visao = glm.lookAt(olho, pos_cav + glm.vec3(0, 0.4, 0), glm.vec3(0, 1, 0))
@@ -180,6 +270,7 @@ def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
     f = float(estado["luz_pontual"])
 
     enviar(prog,
+           u_sem_luz=False,
            u_visao=visao, u_projecao=projecao, u_olho=olho,
            u_base=0, u_usar_textura=True,
            u_blinn=estado["blinn"], u_cartoon=estado["cartoon"], u_niveis=NIVEIS_CARTOON,
@@ -191,7 +282,7 @@ def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
     # 3. Hierarquia do cavaleiro + espada
     M_cav = glm.rotate(glm.translate(giro, pos_cav),
                        estado["cav_dir"] * math.pi * 0.5, glm.vec3(0, 1, 0))
-    if estado["game_over"]:
+    if estado["fase"] == "GAME_OVER":
         M_cav = glm.rotate(M_cav, -math.pi * 0.5, glm.vec3(1, 0, 0))
 
     ang_espada = 1.4 if estado["golpe"] > 0.0 else 0.2
@@ -233,6 +324,18 @@ def desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
 
 
 def main():
+    print("""Controles:
+    ENTER / ESPACO : iniciar partida (na tela de inicio)
+    A / D ou Setas : mover o cavaleiro
+    ESPACO         : golpe de espada
+    P              : pausar / retomar
+    R              : reiniciar partida
+    Q              : alternar Camera Lateral / Camera Orbital
+    Mouse + Scroll : girar (Trackball) e aproximar/afastar na Camera Orbital
+    V              : ligar / desligar VSync
+    B / T / L      : Blinn-Phong / Cartoon / Luz pontual
+    W / C / Z      : aramado / descarte de faces / zerar Trackball
+    ESC            : sair""")
     glfw.set_error_callback(erro_glfw)
     if not glfw.init():
         sys.exit("FALHA: glfw nao inicializou")
@@ -264,6 +367,19 @@ def main():
         "piso":      MalhaGPU(ctx, prog, *criar_cubo(uv_escala=8.0)),
         "pilar":     MalhaGPU(ctx, prog, *criar_cubo(uv_escala=1.0)),
     }
+
+    vbo_circ = ctx.buffer(curva_circulo().tobytes())
+    vao_circ = ctx.vertex_array(prog, [(vbo_circ, '4f', 'vPosition')])
+
+    vbo_coracao = ctx.buffer(curva_coracao().tobytes())
+    vao_coracao = ctx.vertex_array(prog, [(vbo_coracao, '4f', 'vPosition')])
+
+    vbo_quad = ctx.buffer(QUAD.tobytes())
+    vao_quad = ctx.vertex_array(prog, [(vbo_quad, '4f', 'vPosition')])  
+    
+    vbo_play = ctx.buffer(curva_circulo(3).tobytes())
+    vao_play = ctx.vertex_array(prog, [(vbo_play, '4f', 'vPosition')])
+    
 
     def carregar_tex(ctx, nome):
         tex = tx.carregar(ctx, abrir(nome), srgb=True, mipmap=True)
@@ -315,10 +431,20 @@ def main():
             estado["luz_pontual"] = not estado["luz_pontual"]
         elif key == glfw.KEY_Q:
             estado["cam_orbital"] = not estado["cam_orbital"]
-        elif key == glfw.KEY_SPACE and estado["golpe"] == 0.0 and not estado["game_over"]:
-            estado["golpe"] = DURACAO_GOLPE
+        elif key == glfw.KEY_V:
+            estado["vsync"] = not estado["vsync"]
+            glfw.swap_interval(1 if estado["vsync"] else 0)
+        elif key == glfw.KEY_ENTER and estado["fase"] == "INICIO":
+            estado["fase"] = "JOGANDO"
+        elif key == glfw.KEY_P and estado["fase"] in ("JOGANDO", "PAUSADO"):
+            estado["fase"] = "PAUSADO" if estado["fase"] == "JOGANDO" else "JOGANDO"
+        elif key == glfw.KEY_SPACE:
+            if estado["fase"] == "INICIO":
+                estado["fase"] = "JOGANDO"
+            elif estado["fase"] == "JOGANDO" and estado["golpe"] == 0.0:
+                estado["golpe"] = DURACAO_GOLPE
         elif key == glfw.KEY_R:
-            reiniciar()
+            reiniciar("JOGANDO")
 
     def botao(window, button, action, mods):
         if not estado["cam_orbital"] or button != glfw.MOUSE_BUTTON_LEFT:
@@ -349,14 +475,17 @@ def main():
     redimensionou(janela, *glfw.get_framebuffer_size(janela))
 
     instante_anterior = glfw.get_time()
+    quadros, marco = 0, instante_anterior
 
     while not glfw.window_should_close(janela):
         agora = glfw.get_time()
         dt = min(agora - instante_anterior, DT_MAXIMO)
         instante_anterior = agora
-        estado["tempo"] = agora
 
-        if not estado["game_over"]:
+        # Em INICIO, PAUSADO ou GAME_OVER nada se move e o tempo nao acumula
+        if estado["fase"] == "JOGANDO":
+            estado["tempo"] += dt
+
             esq = (glfw.get_key(janela, glfw.KEY_A) == glfw.PRESS or
                    glfw.get_key(janela, glfw.KEY_LEFT) == glfw.PRESS)
             dir_ = (glfw.get_key(janela, glfw.KEY_D) == glfw.PRESS or
@@ -372,15 +501,16 @@ def main():
             sentido_z = 1.0 if estado["cav_x"] > estado["zumbi_x"] else -1.0
             estado["zumbi_x"] += sentido_z * estado["zumbi_vel"] * dt
 
-            espada_x = estado["cav_x"] + estado["cav_dir"] * 0.9
-            if estado["golpe"] > 0.0 and colidiu(espada_x, MEIO_ESPADA,
-                                                 estado["zumbi_x"], MEIO_BONECO):
+            pos_cav = glm.vec3(estado["cav_x"], 1.0, 0.0)
+            pos_zum = glm.vec3(estado["zumbi_x"], 1.0, 0.0)
+            pos_esp = glm.vec3(estado["cav_x"] + estado["cav_dir"] * 0.9, 1.0, 0.0)
+
+            if estado["golpe"] > 0.0 and colidiu_3d(pos_esp, MEIO_ESPADA, pos_zum, MEIO_BONECO):
                 estado["pontos"] += 1
                 estado["zumbi_vel"] += PASSO_VEL
                 estado["zumbi_x"] = random.choice([-SPAWN_X, SPAWN_X])
-            elif colidiu(estado["cav_x"], MEIO_BONECO,
-                         estado["zumbi_x"], MEIO_BONECO):
-                estado["game_over"] = True
+            elif colidiu_3d(pos_cav, MEIO_BONECO, pos_zum, MEIO_BONECO):
+                estado["fase"] = "GAME_OVER"
 
         if estado["cam_orbital"]:
             if bola.arrastando:
@@ -390,23 +520,32 @@ def main():
 
         desenhar_quadro(ctx, prog, objetos, texs, luz_dir, luz_pont,
                         estado, camera, bola)
+        desenhar_placar(ctx, prog, vao_circ, vao_coracao,vao_play,vao_quad, camera,
+                        estado["pontos"], vivo=(estado["fase"] != "GAME_OVER"))
         glfw.swap_buffers(janela)
         glfw.poll_events()
 
-        if estado["game_over"]:
-            glfw.set_window_title(janela, f"GAME OVER - Pontos: {estado['pontos']} (R reinicia)")
-        else:
-            cam = "Orbital" if estado["cam_orbital"] else "Lateral"
-            glfw.set_window_title(
-                janela,
-                f"Cavaleiro vs Zumbis | Pontos: {estado['pontos']} | "
-                f"Vel: {estado['zumbi_vel']:.1f} | Cam: {cam} [Q]")
+        quadros += 1
+        if agora - marco >= 0.5:
+            estado["fps"] = quadros / (agora - marco)
+            quadros, marco = 0, agora
+
+        cam = "Orbital" if estado["cam_orbital"] else "Lateral"
+        vs = "ON" if estado["vsync"] else "OFF"
+        glfw.set_window_title(
+            janela,
+            f"Cavaleiro vs Zumbis | {estado['fase']} | Pts: {estado['pontos']} | "
+            f"Cam: {cam} [Q] | VSync: {vs} [V] | {estado['fps']:5.1f} fps")
+    
 
     for obj in objetos.values():
         obj.liberar()
     for t in texs.values():
         t.release()
-    prog.release()
+    for r in (vao_circ, vbo_circ, vao_coracao, vbo_coracao, prog):
+        r.release()
+    for j in (vbo_quad, vao_quad):
+        j.release()
     glfw.terminate()
 
 
